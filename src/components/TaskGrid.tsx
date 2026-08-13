@@ -2,13 +2,19 @@
 
 import React, { useMemo } from 'react';
 import { AgGridReact } from 'ag-grid-react';
-import { ColDef, ModuleRegistry, ValueGetterParams } from 'ag-grid-community';
+import { CellClassParams, ColDef, ModuleRegistry } from 'ag-grid-community';
 import { ClientSideRowModelModule } from 'ag-grid-community';
 
-import 'ag-grid-community/styles/ag-grid.css';
-import 'ag-grid-community/styles/ag-theme-alpine.css';
+// AG Grid CSS is loaded globally from CDN in the root layout to avoid
+// postcss/turbopack processing issues during dev on Windows.
 
-import { Task } from '@/services/api';
+interface Task {
+  title: string;
+  dueDate?: string;
+  creatorEmail: string;
+  assignedToEmail: string;
+  status: string;
+}
 
 // Register required AG Grid modules
 ModuleRegistry.registerModules([ClientSideRowModelModule]);
@@ -28,8 +34,8 @@ export default function TaskGrid({ rowData }: TaskGridProps) {
       headerName: 'Status', 
       flex: 1,
       cellClassRules: {
-        'text-green-600 font-bold': (params: ValueGetterParams<Task>) => params.value === 'Completed',
-        'text-amber-600': (params: ValueGetterParams<Task>) => params.value === 'Pending',
+        'text-green-600 font-bold': (params: CellClassParams<Task, any>) => params.data?.status === 'Completed',
+        'text-amber-600': (params: CellClassParams<Task, any>) => params.data?.status === 'Pending',
       }
     }
   ], []);
@@ -39,6 +45,7 @@ export default function TaskGrid({ rowData }: TaskGridProps) {
       <AgGridReact 
         rowData={rowData} 
         columnDefs={columnDefs} 
+        theme="legacy"
         pagination={true}
         paginationPageSize={10}
       />

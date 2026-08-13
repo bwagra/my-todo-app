@@ -1,594 +1,526 @@
 'use client';
 
-import { useState, useEffect, useMemo, useRef } from 'react';
-import { createClient } from '@supabase/supabase-js';
-import {ModuleRegistry, AllCommunityModule} from 'ag-grid-community';
+import React, { useState, useEffect, useMemo } from 'react';
 import { AgGridReact } from 'ag-grid-react';
-ModuleRegistry.registerModules([AllCommunityModule]);
+import type { ColDef } from 'ag-grid-community';
+import { ModuleRegistry, AllCommunityModule, ClientSideRowModelModule, ValidationModule } from 'ag-grid-community';
 
-// Initialize Supabase Client
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL || '',
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
-);
+// Register required AG Grid modules so the grid features (sorting, filtering, validation, etc.)
+// are available during runtime.
+ModuleRegistry.registerModules([AllCommunityModule, ClientSideRowModelModule, ValidationModule]);
 
-export default function Home() {
-  // Auth States
-  const [user, setUser] = useState(null);
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [authLoading, setAuthLoading] = useState(true);
+// AG Grid styles are loaded globally from the root layout to avoid
+// postcss / Turbopack worker evaluation issues during dev on Windows.
 
-  // App States
-  const [tasks, setTasks] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [title, setTitle] = useState('');
-  const [type, setType] = useState('todo');
-  const [dueDate, setDueDate] = useState('');
-  const [dueTime, setDueTime] = useState('');
-  const [assignedToEmail, setAssignedToEmail] = useState('');
-  const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
-  const [editTitle, setEditTitle] = useState('');
-  const [editType, setEditType] = useState('todo');
-  const [editDueDate, setEditDueDate] = useState('');
-  const [editDueTime, setEditDueTime] = useState('');
-  const [editAssignedToEmail, setEditAssignedToEmail] = useState('');
-  
-  const gridRef = useRef<AgGridReact>(null);
+import TaskModal from '../components/TaskModal';
+import Sidebar from '../components/Sidebar';
+import { TaskApiService } from '../services/api';
+import { supabase } from '../lib/supabaseClient';
 
-  // 1. Check Auth Session on Mount
-  useEffect(() => {
-    const getInitialSession = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      const activeUser = session?.user ?? null;
-      setUser(activeUser);
-      setAuthLoading(false);
+interface Attachment {
+  filename: string;
+  originalName?: string;
+}
 
-      if (activeUser?.email) {
-        fetchTasks(activeUser.id, activeUser.email);
-      } else {
-        setTasks([]);
-      }
-      setLoading(false);
-    };
+interface Task {
+  id: string;
+  title: string;
+  body: string;
+  email: string;
+  attachments?: Attachment[];
+  githubIssueUrl?: string;
+}
 
-    getInitialSession();
-
-    // Listen live for auth changes (sign in, sign out, email verification redirect)
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (_event, session) => {
-        const activeUser = session?.user ?? null;
-        setUser(activeUser);
-        if (activeUser?.email) {
-          fetchTasks(activeUser.id, activeUser.email);
-        } else {
-          setTasks([]); // Clear tasks on logout
-        }
-        setAuthLoading(false);
-        setLoading(false);
-      }
-    );
-
-    // Clean up subscription when component unmounts
-    return () => {
-      subscription.unsubscribe();
-    };
-  }, []);
-  // 2. Fetch Tasks (where user is creator OR assignee)
-  const fetchTasks = async (userId: string | undefined, userEmail: string) => {
-    const { data, error } = await supabase
-      .from('tasks')
-      .select('*')
-      .or(`created_by.eq.${userId ?? 'null'},assigned_to_email.eq.${userEmail}`)
-      .order('created_at', { ascending: false });
-
-    if (!error && data) setTasks(data);
-  };
-
-  // 3. Auth Actions
-  const resetEditState = () => {
-    setEditingTaskId(null);
-    setEditTitle('');
-    setEditType('todo');
-    setEditDueDate('');
-    setEditDueTime('');
-    setEditAssignedToEmail('');
-  };
-
-  const handleSignUp = async (e: React.FormEvent) => {
-  e.preventDefault();
-  
-  const { data, error } = await supabase.auth.signUp({
-    email,
-    password,
-    options: {
-      // Redirects user back to your app homepage after clicking the email link
-      emailRedirectTo: `${window.location.origin}`,
-    },
+export default function DashboardPage() {
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingTask, setEditingTask] = useState<Task | null>(null);
+  const [rowData, setRowData] = useState<Task[]>([]);
+  const [filter, setFilter] = useState<'all' | 'my' | 'completed'>('all');
+  const [currentUserEmail, setCurrentUserEmail] = useState<string>('');
+  const [currentUserAvatar, setCurrentUserAvatar] = useState<string>('');
+  const [showProfileMenu, setShowProfileMenu] = useState(false);
+  const [emailFilterQuery, setEmailFilterQuery] = useState<string>('');
+  const [isLoading, setIsLoading] = useState(true);
+  const [showSidebar, setShowSidebar] = useState<boolean>(() => {
+    try {
+      const raw = typeof window !== 'undefined' ? localStorage.getItem('showSidebar') : null;
+      return raw === null ? true : raw === 'true';
+    } catch (e) {
+      return true;
+    }
   });
 
-  if (error) {
-    alert(error.message);
-  } else {
-    alert('Check your email for the confirmation link!');
-  }
-};
-
-  const handleSignIn = async (e) => {
-    e.preventDefault();
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) alert(error.message);
+  const toggleSidebar = () => {
+    setShowSidebar((s) => {
+      const next = !s;
+      try { localStorage.setItem('showSidebar', String(next)); } catch (e) {}
+      return next;
+    });
   };
+
+  const currentUserInitials = useMemo(() => {
+    if (!currentUserEmail) return 'U';
+    const parts = currentUserEmail.split('@')[0].split(/[^a-zA-Z0-9]+/).filter(Boolean);
+    if (parts.length === 0) return 'U';
+    return parts.slice(0, 2).map((part) => part[0]?.toUpperCase() || '').join('') || 'U';
+  }, [currentUserEmail]);
 
   const handleSignOut = async () => {
     await supabase.auth.signOut();
+    try {
+      localStorage.removeItem('userEmail');
+    } catch (e) {
+      // ignore
+    }
+    window.location.href = '/signin';
   };
 
-  // 4a. Add Task Action
-  const handleAddTask = async (e) => {
-    e.preventDefault();
-    if (!title || !dueDate || !dueTime || !assignedToEmail) return;
+  // Debounce the email filter so UI updates are less noisy
+  const [debouncedEmailQuery, setDebouncedEmailQuery] = useState<string>('');
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedEmailQuery(emailFilterQuery), 300);
+    return () => clearTimeout(timer);
+  }, [emailFilterQuery]);
 
-    const newTask = {
-      title,
-      type,
-      due_date: dueDate,
-      due_time: dueTime,
-      assigned_to_email: assignedToEmail,
-      created_by: user.id,
-      completed: false,
+  // Fetch initial tasks from Angular backend
+  const fetchTasks = async (email?: string) => {
+    setIsLoading(true);
+    try {
+      const userEmail = email || currentUserEmail;
+      if (!userEmail) return;
+      const data = await TaskApiService.getTasks(userEmail);
+      setRowData(data as any[]);
+    } catch (err) {
+      console.error('Failed to fetch tasks:', err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    const loadSession = async () => {
+      const { data } = await supabase.auth.getSession();
+      const sessionUser = data?.session?.user;
+      const email = sessionUser?.email;
+      const avatarFromStorage = (() => {
+        try {
+          return localStorage.getItem('userAvatar') || '';
+        } catch {
+          return '';
+        }
+      })();
+      const avatar =
+        sessionUser?.user_metadata?.avatar_url ||
+        sessionUser?.user_metadata?.picture ||
+        sessionUser?.user_metadata?.avatar ||
+        avatarFromStorage ||
+        '';
+
+      if (email) {
+        setCurrentUserEmail(email);
+        setCurrentUserAvatar(avatar);
+        await fetchTasks(email);
+      } else {
+        setCurrentUserEmail('');
+        setCurrentUserAvatar('');
+        setIsLoading(false);
+      }
     };
 
-    const { error } = await supabase.from('tasks').insert([newTask]);
+    loadSession();
+    const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
+      const sessionUser = session?.user;
+      const email = sessionUser?.email;
+      const avatarFromStorage = (() => {
+        try {
+          return localStorage.getItem('userAvatar') || '';
+        } catch {
+          return '';
+        }
+      })();
+      const avatar =
+        sessionUser?.user_metadata?.avatar_url ||
+        sessionUser?.user_metadata?.picture ||
+        sessionUser?.user_metadata?.avatar ||
+        avatarFromStorage ||
+        '';
 
-    if (error) {
-      alert(error.message);
-      return;
-    }
-
-    // Trigger Email Notification via API route
-    fetch('/api/assign-task', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        taskTitle: title,
-        assignedToEmail: assignedToEmail,
-        assignerEmail: user.email,
-        dueDate: dueDate,
-      }),
+      if (email) {
+        setCurrentUserEmail(email);
+        setCurrentUserAvatar(avatar);
+        fetchTasks(email);
+      } else {
+        setCurrentUserEmail('');
+        setCurrentUserAvatar('');
+        setIsLoading(false);
+      }
     });
 
-    setTitle('');
-    fetchTasks(user?.id, user.email);
-  };
+    return () => {
+      authListener.subscription.unsubscribe();
+    };
+  }, []);
 
-  const handleStartEditTask = (task) => {
-    setEditingTaskId(task.id);
-    setEditTitle(task.title || '');
-    setEditType(task.type || 'todo');
-    setEditDueDate(task.due_date || '');
-    setEditDueTime(task.due_time || '');
-    setEditAssignedToEmail(task.assigned_to_email || '');
-  };
-
-  const handleDeleteTask = async (taskId) => {
-    if (!user?.id) return;
-    if (!window.confirm('Delete this task?')) return;
-
-    const { error } = await supabase
-      .from('tasks')
-      .delete()
-      .eq('id', taskId)
-      .eq('created_by', user.id);
-
-    if (error) {
-      alert(error.message);
-      return;
-    }
-
-    resetEditState();
-    fetchTasks(user.id, user.email);
-  };
-
-  const handleUpdateTask = async (e) => {
-    e.preventDefault();
-    if (!editingTaskId || !user?.id) return;
-    if (!editTitle || !editDueDate || !editDueTime || !editAssignedToEmail) return;
-
-    const { error } = await supabase
-      .from('tasks')
-      .update({
-        title: editTitle,
-        type: editType,
-        due_date: editDueDate,
-        due_time: editDueTime,
-        assigned_to_email: editAssignedToEmail,
-      })
-      .eq('id', editingTaskId)
-      .eq('created_by', user.id);
-
-    if (error) {
-      alert(error.message);
-      return;
-    }
-
-    resetEditState();
-    fetchTasks(user.id, user.email);
-  };
-
-  // 4b. Toggle Task Completion Status in Database
-  const handleToggleComplete = async (taskId, currentStatus) => {
-    const { error } = await supabase
-      .from('tasks')
-      .update({ completed: currentStatus })
-      .eq('id', taskId);
-
-    if (error) {
-      alert(`Failed to update status: ${error.message}`);
-      fetchTasks(user?.id, user?.email ?? '');
-      return;
-    }
-
-    // Optimistically update local state so the grid reflects change instantly
-    setTasks((prevTasks) =>
-      prevTasks.map((task) =>
-        task.id === taskId ? { ...task, completed: currentStatus } : task
-      )
-    );
-  };
-
-  // 5. AG Grid Column Definitions (WITH INTERACTIVE CHECKBOX RENDERER)
-  const columnDefs = useMemo(
-    () => [
-      { field: 'title', headerName: 'Task Title', filter: true },
-      { field: 'type', headerName: 'Type', filter: true, width: 120 },
-      { field: 'due_date', headerName: 'Due Date', filter: 'agDateColumnFilter' },
-      { field: 'due_time', headerName: 'Time', width: 120 },
-      { field: 'assigned_to_email', headerName: 'Assigned To', filter: true },
-      {
-        headerName: 'Actions',
-        width: 150,
-        cellRenderer: (params) => {
-          const task = params.data;
-          const canManage = user?.id && task.created_by === user.id;
-
-          if (!canManage) {
-            return <span className="text-xs text-gray-400">View only</span>;
-          }
-
-          return (
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={() => handleStartEditTask(task)}
-                className="rounded bg-amber-500 px-2 py-1 text-xs font-semibold text-white hover:bg-amber-400"
-              >
-                Edit
-              </button>
-              <button
-                type="button"
-                onClick={() => handleDeleteTask(task.id)}
-                className="rounded bg-red-600 px-2 py-1 text-xs font-semibold text-white hover:bg-red-500"
-              >
-                Delete
-              </button>
-            </div>
-          );
-        },
+  // AG Grid Column Definitions (memoized so highlight depends on debounced query)
+  const columnDefs = useMemo(() => [
+    { field: 'title', headerName: 'Title', flex: 1, filter: true },
+    { field: 'body', headerName: 'Description', flex: 2 },
+    {
+      field: 'email',
+      headerName: 'Assignee Email',
+      flex: 1.5,
+      filter: true,
+      cellRenderer: (params: any) => {
+        const email: string = params.value || '';
+        const q = debouncedEmailQuery?.trim() || '';
+        if (!q) return <span>{email}</span>;
+        const lower = email.toLowerCase();
+        const match = q.toLowerCase();
+        const idx = lower.indexOf(match);
+        if (idx === -1) return <span>{email}</span>;
+        const before = email.slice(0, idx);
+        const matched = email.slice(idx, idx + match.length);
+        const after = email.slice(idx + match.length);
+        return (
+          <span>
+            {before}
+            <span style={{ backgroundColor: '#fde68a' }}>{matched}</span>
+            {after}
+          </span>
+        );
+      }
+    },
+    {
+      field: 'githubIssueUrl',
+      headerName: 'GitHub Issue',
+      flex: 1.2,
+      cellRenderer: (params: any) => {
+        const url = params.value;
+        if (!url) {
+          return <span style={{ color: '#94a3b8', fontSize: '0.875rem' }}>—</span>;
+        }
+        return (
+          <a
+            href={url}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ color: '#2563eb', fontWeight: 600, textDecoration: 'none' }}
+          >
+            Open issue
+          </a>
+        );
       },
-      {
-        field: 'completed',
-        headerName: 'Status',
-        width: 160,
-        cellRenderer: (params) => {
-          const isChecked = params.value;
+    },
+    {
+      field: 'attachments',
+      headerName: 'Attachments',
+      flex: 2,
+      cellRenderer: (params: any) => {
+        const files: Attachment[] = params.value;
 
-          const handleChange = async (e) => {
-            const newStatus = e.target.checked;
-            const taskId = params.data.id;
-            await handleToggleComplete(taskId, newStatus);
-          };
+        if (!files || files.length === 0) {
+          return <span style={{ color: '#94a3b8', fontSize: '0.875rem' }}>No attachments</span>;
+        }
 
-          return (
-            <div className="flex items-center h-full gap-2">
-              <input
-                type="checkbox"
-                checked={isChecked}
-                onChange={handleChange}
-                className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
-              />
-              <span
-                className={
-                  isChecked
-                    ? 'text-gray-400 line-through'
-                    : 'text-gray-900 font-medium'
-                }
-              >
-                {isChecked ? 'Completed' : 'Pending'}
-              </span>
-            </div>
-          );
-        },
+        return (
+          <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap', height: '100%' }}>
+            {files.map((file, index) => {
+              const displayName = file.originalName || file.filename;
+                      const downloadUrl = TaskApiService.getDownloadUrl(file.filename);
+
+              return (
+                <a
+                  key={index}
+                  href={downloadUrl}
+                  download
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{
+                    fontSize: '0.75rem',
+                    fontWeight: 500,
+                    color: '#2563eb',
+                    backgroundColor: '#eff6ff',
+                    padding: '2px 8px',
+                    borderRadius: '4px',
+                    textDecoration: 'none',
+                    border: '1px solid #bfdbfe',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                    lineHeight: '1.2'
+                  }}
+                  title={`Click to download ${displayName}`}
+                >
+                  📎 {displayName}
+                </a>
+              );
+            })}
+          </div>
+        );
       },
-    ],
-    [tasks, user]
-  );
-
-  const defaultColDef = useMemo(
-    () => ({
+    },
+    {
+      headerName: 'Actions',
+      field: 'id',
       flex: 1,
-      minWidth: 100,
-      resizable: true,
-      sortable: true,
-    }),
-    []
-  );
+      cellRenderer: (params: any) => (
+        <button
+          onClick={() => {
+            setEditingTask(params.data);
+            setIsModalOpen(true);
+          }}
+          style={{
+            padding: '4px 12px',
+            backgroundColor: '#eab308',
+            color: '#ffffff',
+            border: 'none',
+            borderRadius: '4px',
+            cursor: 'pointer',
+            fontWeight: '600',
+            fontSize: '0.85rem'
+          }}
+        >
+          Edit
+        </button>
+      ),
+    },
+  ] as ColDef<Task, any>[], [debouncedEmailQuery]);
 
-  const formattedToday = new Date().toLocaleDateString('en-GB', {
-    weekday: 'long',
-    day: 'numeric',
-    month: 'long',
-    year: 'numeric',
+  // Submit handler for both Create and Edit
+  const handleFormSubmit = async (formData: FormData) => {
+    try {
+      await TaskApiService.saveTask(formData);
+
+      // Refresh task list after saving
+      await fetchTasks();
+
+      // Reset state and close modal
+      setIsModalOpen(false);
+      setEditingTask(null);
+    } catch (err) {
+      console.error('Error saving task:', err);
+    }
+  };
+
+  // Filtered row data according to sidebar selection
+  const filteredRowData = rowData.filter((t) => {
+    if (filter === 'all') return true;
+    if (filter === 'my') return t.email === currentUserEmail;
+    if (filter === 'completed') return (t as any).status === 'Completed' || (t as any).status === 'completed';
+    return true;
   });
 
-  if (authLoading) {
-    return (
-      <div className="flex h-screen items-center justify-center text-gray-600">
-        Loading Dashboard...
-      </div>
-    );
-  }
+  // Apply assignee search filter (debounced) if present
+  const visibleRowData = debouncedEmailQuery.trim()
+    ? filteredRowData.filter((t) => t.email.toLowerCase().includes(debouncedEmailQuery.toLowerCase()))
+    : filteredRowData;
 
-  // --- Auth View ---
-  if (!user) {
+  const matchesCount = visibleRowData.length;
+
+  // If no user is signed in, show a simple gate to signin/signup
+  if (!currentUserEmail) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-gray-50 px-4">
-        <div className="w-full max-w-md space-y-8 rounded-xl bg-white p-8 shadow-md">
-          <h2 className="text-center text-3xl font-bold tracking-tight text-gray-900">
-            Task Management Portal
-          </h2>
-          <form className="mt-8 space-y-4">
-            <input
-              type="email"
-              placeholder="Email address"
-              className="w-full rounded-md border border-gray-300 px-3 py-2 text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-            />
-            <input
-              type="password"
-              placeholder="Password"
-              className="w-full rounded-md border border-gray-300 px-3 py-2 text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-            />
-            <div className="flex gap-4 pt-2">
-              <button
-                onClick={handleSignIn}
-                className="flex-1 rounded-md bg-indigo-600 py-2 text-sm font-semibold text-white hover:bg-indigo-500"
-              >
-                Sign In
-              </button>
-              <button
-                onClick={handleSignUp}
-                className="flex-1 rounded-md bg-gray-600 py-2 text-sm font-semibold text-white hover:bg-gray-50"
-              >
-                Sign Up
-              </button>
+      <div style={{ width: '100%' }}>
+        <div style={{ display: 'flex', minHeight: '70vh', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ padding: 24, borderRadius: 8, background: '#fff', boxShadow: '0 6px 18px rgba(0,0,0,0.06)', textAlign: 'center' }}>
+            <h2 style={{ margin: 0 }}>Please sign in</h2>
+            <p style={{ color: '#475569' }}>You must sign in to view or create tasks.</p>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
+              <a href="/signin"><button style={{ padding: '8px 12px', background: '#2563eb', color: '#fff', border: 'none', borderRadius: 6 }}>Sign in</button></a>
+              <a href="/signup"><button style={{ padding: '8px 12px', borderRadius: 6 }}>Create account</button></a>
             </div>
-          </form>
+          </div>
         </div>
+
+        {/* Task Modal (Create & Edit) */}
+        <TaskModal
+          isOpen={isModalOpen}
+          onClose={() => {
+            setIsModalOpen(false);
+            setEditingTask(null);
+          }}
+          onSubmit={handleFormSubmit}
+          initialData={editingTask}
+          currentUserEmail={currentUserEmail}
+        />
       </div>
     );
   }
 
-  // --- Main Dashboard View ---
   return (
-    <div className="min-h-screen bg-gray-50 p-6 text-gray-900">
-      <header className="mb-8 flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-gray-900">
-            My Workspace
-          </h1>
-          <p className="text-sm text-gray-500">{formattedToday}</p>
-        </div>
-        <div className="flex items-center gap-4">
-          <span className="text-sm font-medium text-gray-600">
-            Signed in as: <span className="underline">{user.email}</span>
-          </span>
-          <button
-            onClick={handleSignOut}
-            className="rounded-md bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-500"
-          >
-            Sign Out
-          </button>
-        </div>
-      </header>
+    <div style={{ width: '100%' }}>
+      <div style={{ display: 'flex', gap: '1rem' }}>
+        {showSidebar && <Sidebar onSelect={(f) => setFilter(f)} />}
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-        {/* Creation Card */}
-        <div className="rounded-xl bg-white p-6 shadow-sm h-fit">
-          <h2 className="text-lg font-bold mb-4">Create Assignment</h2>
-          <form onSubmit={handleAddTask} className="space-y-4">
-            <div>
-              <label className="block text-xs font-semibold uppercase text-gray-500 mb-1">
-                Task Mode
-              </label>
-              <div className="grid grid-cols-2 gap-2 bg-gray-100 p-1 rounded-md">
-                <button
-                  type="button"
-                  onClick={() => setType('todo')}
-                  className={`py-1.5 text-xs font-medium rounded ${
-                    type === 'todo'
-                      ? 'bg-white shadow-sm text-indigo-600'
-                      : 'text-gray-500'
-                  }`}
-                >
-                  To-Do
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setType('reminder')}
-                  className={`py-1.5 text-xs font-medium rounded ${
-                    type === 'reminder'
-                      ? 'bg-white shadow-sm text-indigo-600'
-                      : 'text-gray-500'
-                  }`}
-                >
-                  Reminder
-                </button>
-              </div>
+        <div style={{ flex: 1 }}>
+
+          {/* Inline controls: Search and Create */}
+          <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+            <div style={{ position: 'relative' }}>
+              <button
+                type="button"
+                aria-label="Currently signed in user"
+                title={currentUserEmail || 'Not signed in'}
+                onClick={() => setShowProfileMenu((prev) => !prev)}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 10,
+                  padding: '6px 12px 6px 8px',
+                  background: 'linear-gradient(135deg, #ffffff 0%, #e2e8f0 100%)',
+                  border: '1px solid #cbd5e1',
+                  borderRadius: '999px',
+                  color: '#0f172a',
+                  fontSize: '0.8rem',
+                  fontWeight: 700,
+                  maxWidth: '240px',
+                  overflow: 'hidden',
+                  boxShadow: '0 1px 3px rgba(15, 23, 42, 0.08)',
+                  cursor: 'pointer',
+                }}
+              >
+                <span style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+                  {currentUserAvatar ? (
+                    <img
+                      src={currentUserAvatar}
+                      alt={currentUserEmail || 'User profile'}
+                      style={{
+                        width: 30,
+                        height: 30,
+                        borderRadius: '50%',
+                        objectFit: 'cover',
+                        boxShadow: '0 0 0 2px rgba(255,255,255,0.8)',
+                        display: 'block',
+                      }}
+                    />
+                  ) : (
+                    <span
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        width: 30,
+                        height: 30,
+                        borderRadius: '50%',
+                        background: 'linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%)',
+                        color: '#fff',
+                        fontSize: '0.75rem',
+                        fontWeight: 800,
+                        boxShadow: '0 0 0 2px rgba(255,255,255,0.8)',
+                      }}
+                    >
+                      {currentUserInitials}
+                    </span>
+                  )}
+                  <span
+                    style={{
+                      position: 'absolute',
+                      right: 0,
+                      bottom: 0,
+                      width: 10,
+                      height: 10,
+                      borderRadius: '50%',
+                      background: '#22c55e',
+                      border: '2px solid #ffffff',
+                      boxShadow: '0 0 0 1px rgba(34, 197, 94, 0.15)',
+                    }}
+                  />
+                </span>
+                <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {currentUserEmail || 'Guest'}
+                </span>
+              </button>
+
+              {showProfileMenu && (
+                <div style={{ position: 'absolute', right: 0, top: 'calc(100% + 8px)', background: '#fff', border: '1px solid #e2e8f0', borderRadius: '10px', boxShadow: '0 8px 20px rgba(15,23,42,0.12)', minWidth: '170px', zIndex: 20 }}>
+                  <button type="button" onClick={() => { setShowProfileMenu(false); window.location.href = '/profile'; }} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '10px 12px', border: 'none', background: 'transparent', cursor: 'pointer' }}>My Profile</button>
+                  <div style={{ height: 1, background: '#e2e8f0' }} />
+                  <button type="button" onClick={async () => { setShowProfileMenu(false); await handleSignOut(); }} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '10px 12px', border: 'none', background: 'transparent', color: '#dc2626', cursor: 'pointer', fontWeight: 600 }}>Sign out</button>
+                </div>
+              )}
             </div>
-
-            <div>
-              <label className="block text-xs font-semibold uppercase text-gray-500 mb-1">
-                Details
-              </label>
-              <input
-                type="text"
-                placeholder="What needs to be done?"
-                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                required
-              />
-            </div>
-
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <label className="block text-xs font-semibold uppercase text-gray-500 mb-1">
-                  Date
-                </label>
-                <input
-                  type="date"
-                  className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                  value={dueDate}
-                  onChange={(e) => setDueDate(e.target.value)}
-                  required
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold uppercase text-gray-500 mb-1">
-                  Time
-                </label>
-                <input
-                  type="time"
-                  className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                  value={dueTime}
-                  onChange={(e) => setDueTime(e.target.value)}
-                  required
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold uppercase text-gray-500 mb-1">
-                Assignee Email
-              </label>
-              <input
-                type="email"
-                placeholder="collaborator@example.com"
-                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                value={assignedToEmail}
-                onChange={(e) => setAssignedToEmail(e.target.value)}
-                required
-              />
-            </div>
-
+            <input
+              aria-label="Search assignee"
+              placeholder="Search assignee email..."
+              value={emailFilterQuery}
+              onChange={(e) => setEmailFilterQuery(e.target.value)}
+              style={{ padding: '8px 10px', borderRadius: '6px', border: '1px solid #cbd5e1' }}
+            />
+            <span style={{ color: '#0f172a', background: '#e2e8f0', padding: '4px 8px', borderRadius: '6px', fontSize: '0.9rem' }}>Matches: {matchesCount}</span>
             <button
-              type="submit"
-              className="w-full rounded-md bg-indigo-600 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-indigo-500"
+              onClick={() => {
+                setEditingTask(null);
+                setIsModalOpen(true);
+              }}
+              style={{
+                padding: '10px 18px',
+                backgroundColor: '#16a34a',
+                color: '#ffffff',
+                border: 'none',
+                borderRadius: '6px',
+                fontWeight: '600',
+                cursor: 'pointer',
+                boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
+              }}
             >
-              Deploy Task & Notify
+              +
             </button>
-          </form>
-
-          {editingTaskId && (
-            <div className="mt-6 rounded-lg border border-amber-200 bg-amber-50 p-4">
-              <h3 className="mb-3 text-sm font-semibold text-amber-800">Edit Assignment</h3>
-              <form onSubmit={handleUpdateTask} className="space-y-3">
-                <input
-                  type="text"
-                  placeholder="Updated task title"
-                  className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                  value={editTitle}
-                  onChange={(e) => setEditTitle(e.target.value)}
-                  required
-                />
-
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="mb-1 block text-xs font-semibold uppercase text-gray-500">Date</label>
-                    <input
-                      type="date"
-                      className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                      value={editDueDate}
-                      onChange={(e) => setEditDueDate(e.target.value)}
-                      required
-                    />
-                  </div>
-                  <div>
-                    <label className="mb-1 block text-xs font-semibold uppercase text-gray-500">Time</label>
-                    <input
-                      type="time"
-                      className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                      value={editDueTime}
-                      onChange={(e) => setEditDueTime(e.target.value)}
-                      required
-                    />
-                  </div>
-                </div>
-
-                <input
-                  type="email"
-                  placeholder="Updated assignee email"
-                  className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                  value={editAssignedToEmail}
-                  onChange={(e) => setEditAssignedToEmail(e.target.value)}
-                  required
-                />
-
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="submit"
-                    className="rounded-md bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-500"
-                  >
-                    Save Changes
-                  </button>
-                  <button
-                    type="button"
-                    onClick={resetEditState}
-                    className="rounded-md bg-gray-200 px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-300"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </form>
-            </div>
-          )}
-        </div>
-
-        {/* AG Grid Data Table */}
-        <div className="lg:col-span-2 rounded-xl bg-white p-6 shadow-sm">
-          <div className="mb-4 flex items-center justify-between">
-            <h2 className="text-lg font-bold">Task Management Grid</h2>
-            <p className="text-xs text-gray-400">
-              Click headers to sort / Hover for column filter controls
-            </p>
+            <button
+              onClick={handleSignOut}
+              style={{
+                padding: '10px 14px',
+                backgroundColor: '#dc2626',
+                color: '#ffffff',
+                border: 'none',
+                borderRadius: '6px',
+                fontWeight: '600',
+                cursor: 'pointer',
+                boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
+              }}
+            >
+              Sign out
+            </button>
           </div>
 
-          <div className="ag-theme-alpine w-full h-[400px]">
+          {/* AG Grid Table Container */}
+          <div
+            className="ag-theme-alpine"
+            style={{
+              height: 'calc(100vh - 140px)',
+              width: '100%',
+              borderRadius: '8px',
+              overflow: 'hidden',
+              boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
+            }}
+          >
             <AgGridReact
-              ref={gridRef}
-              rowData={tasks}
+              rowData={visibleRowData}
               columnDefs={columnDefs}
-              defaultColDef={defaultColDef}
-              animateRows={true}
-              reactiveCustomComponents={true}
+              modules={[AllCommunityModule, ClientSideRowModelModule, ValidationModule]}
+              theme="legacy"
+              defaultColDef={{
+                sortable: true,
+                resizable: true,
+              }}
+              rowHeight={48}
+              overlayLoadingTemplate={'<span>Loading tasks...</span>'}
+              overlayNoRowsTemplate={'<span>No tasks found.</span>'}
             />
           </div>
         </div>
       </div>
+
+      {/* Task Modal (Create & Edit) */}
+      <TaskModal
+        isOpen={isModalOpen}
+        onClose={() => {
+          setIsModalOpen(false);
+          setEditingTask(null);
+        }}
+        onSubmit={handleFormSubmit}
+        initialData={editingTask}
+        currentUserEmail={currentUserEmail}
+      />
     </div>
   );
 }
