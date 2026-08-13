@@ -28,6 +28,7 @@ interface Task {
   body: string;
   email: string;
   attachments?: Attachment[];
+  status?: 'Pending' | 'Completed' | string;
   githubIssueUrl?: string;
 }
 
@@ -163,6 +164,30 @@ export default function DashboardPage() {
 
   // AG Grid Column Definitions (memoized so highlight depends on debounced query)
   const columnDefs = useMemo(() => [
+    {
+      headerName: '',
+      field: 'status',
+      width: 80,
+      cellRenderer: (params: any) => {
+        const checked = params.data?.status === 'Completed';
+        return (
+          <input
+            type="checkbox"
+            checked={checked}
+            onChange={async (e) => {
+              const next = e.target.checked ? 'Completed' : 'Pending';
+              try {
+                await TaskApiService.updateTask(params.data.id, { status: next, requesterEmail: currentUserEmail });
+                await fetchTasks();
+              } catch (err) {
+                console.error('Failed to update status:', err);
+                alert('Failed to update task status');
+              }
+            }}
+          />
+        );
+      }
+    },
     { field: 'title', headerName: 'Title', flex: 1, filter: true },
     { field: 'body', headerName: 'Description', flex: 2 },
     {
@@ -215,6 +240,11 @@ export default function DashboardPage() {
       field: 'attachments',
       headerName: 'Attachments',
       flex: 2,
+      valueFormatter: (params: any) => {
+        const files: Attachment[] = params.value;
+        if (!files || files.length === 0) return '';
+        return files.map((f) => f.originalName || f.filename).join(', ');
+      },
       cellRenderer: (params: any) => {
         const files: Attachment[] = params.value;
 
@@ -263,26 +293,62 @@ export default function DashboardPage() {
       headerName: 'Actions',
       field: 'id',
       flex: 1,
-      cellRenderer: (params: any) => (
-        <button
-          onClick={() => {
-            setEditingTask(params.data);
-            setIsModalOpen(true);
-          }}
-          style={{
-            padding: '4px 12px',
-            backgroundColor: '#eab308',
-            color: '#ffffff',
-            border: 'none',
-            borderRadius: '4px',
-            cursor: 'pointer',
-            fontWeight: '600',
-            fontSize: '0.85rem'
-          }}
-        >
-          Edit
-        </button>
-      ),
+      cellRenderer: (params: any) => {
+        const isOwner = params.data?.email === currentUserEmail;
+        return (
+          <div style={{ display: 'flex', gap: 8 }}>
+            {isOwner ? (
+              <>
+                <button
+                  onClick={() => {
+                    setEditingTask(params.data);
+                    setIsModalOpen(true);
+                  }}
+                  style={{
+                    padding: '4px 12px',
+                    backgroundColor: '#eab308',
+                    color: '#ffffff',
+                    border: 'none',
+                    borderRadius: '4px',
+                    cursor: 'pointer',
+                    fontWeight: '600',
+                    fontSize: '0.85rem'
+                  }}
+                >
+                  Edit
+                </button>
+                <button
+                  onClick={async () => {
+                    const ok = confirm('Delete this task? This cannot be undone.');
+                    if (!ok) return;
+                    try {
+                      await TaskApiService.deleteTask(params.data.id, currentUserEmail);
+                      await fetchTasks();
+                    } catch (err) {
+                      console.error('Delete failed:', err);
+                      alert('Failed to delete task');
+                    }
+                  }}
+                  style={{
+                    padding: '4px 12px',
+                    backgroundColor: '#ef4444',
+                    color: '#ffffff',
+                    border: 'none',
+                    borderRadius: '4px',
+                    cursor: 'pointer',
+                    fontWeight: '600',
+                    fontSize: '0.85rem'
+                  }}
+                >
+                  Delete
+                </button>
+              </>
+            ) : (
+              <span style={{ color: '#64748b', fontSize: '0.9rem' }}>No actions</span>
+            )}
+          </div>
+        );
+      }
     },
   ] as ColDef<Task, any>[], [debouncedEmailQuery]);
 

@@ -125,4 +125,40 @@ export class TaskService {
     this.reminders.splice(idx, 1);
     return true;
   }
+
+  // Update an existing task (partial updates allowed)
+  async updateTask(id: string, updates: any, requesterEmail?: string): Promise<Task | null> {
+    const idx = this.tasks.findIndex((t) => t.id === id);
+    if (idx === -1) return null;
+    const existing = this.tasks[idx];
+
+    // Simple authorization: only the owner (email) may update
+    if (requesterEmail && existing.email !== requesterEmail) {
+      throw new Error('Unauthorized');
+    }
+
+    const updated: Task = {
+      ...existing,
+      ...(updates.title !== undefined ? { title: updates.title } : {}),
+      ...(updates.body !== undefined ? { body: updates.body } : {}),
+      ...(updates.email !== undefined ? { email: updates.email } : {}),
+      ...(updates.attachments !== undefined ? { attachments: updates.attachments } : {}),
+      ...(updates.status !== undefined ? { status: updates.status } : {}),
+    } as Task & { status?: string };
+
+    this.tasks[idx] = updated;
+    return updated;
+  }
+
+  // Delete a task by id (only owner can delete)
+  async deleteTask(id: string, requesterEmail?: string): Promise<boolean> {
+    const idx = this.tasks.findIndex((t) => t.id === id);
+    if (idx === -1) return false;
+    const existing = this.tasks[idx];
+    if (requesterEmail && existing.email !== requesterEmail) {
+      throw new Error('Unauthorized');
+    }
+    this.tasks.splice(idx, 1);
+    return true;
+  }
 }

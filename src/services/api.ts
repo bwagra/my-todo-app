@@ -68,6 +68,23 @@ export const TaskApiService = {
   getDownloadUrl(filename: string) {
     return buildUrl(`/tasks/download/${encodeURIComponent(filename)}`);
   },
+  async updateTask(id: string, payload: any) {
+    const res = await fetch(buildUrl(`/tasks/${encodeURIComponent(id)}`), {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) throw new Error('Update task failed');
+    return res.json();
+  },
+  async deleteTask(id: string, requesterEmail?: string) {
+    const url = requesterEmail
+      ? buildUrl(`/tasks/${encodeURIComponent(id)}?requesterEmail=${encodeURIComponent(requesterEmail)}`)
+      : buildUrl(`/tasks/${encodeURIComponent(id)}`);
+    const res = await fetch(url, { method: 'DELETE' });
+    if (!res.ok) throw new Error('Delete task failed');
+    return res.json();
+  },
   // --- Reminders ---
   async getReminders(email: string) {
     const res = await fetch(buildUrl(`/reminders?email=${encodeURIComponent(email)}`));
