@@ -13,10 +13,6 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 
     const existing = tasks[idx];
 
-    if (requesterEmail && normalizeEmail(existing.email) !== requesterEmail) {
-      return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 403 });
-    }
-
     const updates: Partial<Task & { status?: string }> = {};
     if (typeof body.title === 'string') updates.title = body.title;
     if (typeof body.body === 'string') updates.body = body.body;
@@ -74,10 +70,6 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
   if (idx === -1) return new Response(JSON.stringify({ error: 'Not found' }), { status: 404 });
 
   const existing = tasks[idx];
-  if (requesterEmail && normalizeEmail(existing.email) !== requesterEmail) {
-    return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 403 });
-  }
-
   tasks.splice(idx, 1);
   return new Response(JSON.stringify({ success: true }), { headers: { 'Content-Type': 'application/json' } });
 }

@@ -88,8 +88,7 @@ export default function DashboardPage() {
     setIsLoading(true);
     try {
       const userEmail = email || currentUserEmail;
-      if (!userEmail) return;
-      const data = await TaskApiService.getTasks(userEmail);
+      const data = await TaskApiService.getTasks(userEmail || '');
       setRowData(data as any[]);
     } catch (err) {
       console.error('Failed to fetch tasks:', err);
@@ -294,63 +293,54 @@ export default function DashboardPage() {
       headerName: 'Actions',
       field: 'id',
       flex: 1,
-      cellRenderer: (params: any) => {
-        const isOwner = params.data?.email === currentUserEmail;
-        return (
-          <div style={{ display: 'flex', gap: 8 }}>
-            {isOwner ? (
-              <>
-                <button
-                  onClick={() => {
-                    setEditingTask(params.data);
-                    setIsModalOpen(true);
-                  }}
-                  style={{
-                    padding: '4px 12px',
-                    backgroundColor: '#eab308',
-                    color: '#ffffff',
-                    border: 'none',
-                    borderRadius: '4px',
-                    cursor: 'pointer',
-                    fontWeight: '600',
-                    fontSize: '0.85rem'
-                  }}
-                >
-                  Edit
-                </button>
-                <button
-                  onClick={async () => {
-                    const ok = confirm('Delete this task? This cannot be undone.');
-                    if (!ok) return;
-                    try {
-                      await TaskApiService.deleteTask(params.data.id, currentUserEmail);
-                      await fetchTasks();
-                    } catch (err) {
-                      console.error('Delete failed:', err);
-                      const msg = err instanceof Error ? err.message : 'Failed to delete task';
-                      alert(msg);
-                    }
-                  }}
-                  style={{
-                    padding: '4px 12px',
-                    backgroundColor: '#ef4444',
-                    color: '#ffffff',
-                    border: 'none',
-                    borderRadius: '4px',
-                    cursor: 'pointer',
-                    fontWeight: '600',
-                    fontSize: '0.85rem'
-                  }}
-                >
-                  Delete
-                </button>
-              </>
-            ) : (
-              <span style={{ color: '#64748b', fontSize: '0.9rem' }}>No actions</span>
-            )}
-          </div>
-        );
-      }
+      cellRenderer: (params: any) => (
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button
+            onClick={() => {
+              setEditingTask(params.data);
+              setIsModalOpen(true);
+            }}
+            style={{
+              padding: '4px 12px',
+              backgroundColor: '#eab308',
+              color: '#ffffff',
+              border: 'none',
+              borderRadius: '4px',
+              cursor: 'pointer',
+              fontWeight: '600',
+              fontSize: '0.85rem'
+            }}
+          >
+            Edit
+          </button>
+          <button
+            onClick={async () => {
+              const ok = confirm('Delete this task? This cannot be undone.');
+              if (!ok) return;
+              try {
+                await TaskApiService.deleteTask(params.data.id, currentUserEmail);
+                await fetchTasks();
+              } catch (err) {
+                console.error('Delete failed:', err);
+                const msg = err instanceof Error ? err.message : 'Failed to delete task';
+                alert(msg);
+              }
+            }}
+            style={{
+              padding: '4px 12px',
+              backgroundColor: '#ef4444',
+              color: '#ffffff',
+              border: 'none',
+              borderRadius: '4px',
+              cursor: 'pointer',
+              fontWeight: '600',
+              fontSize: '0.85rem'
+            }}
+          >
+            Delete
+          </button>
+        </div>
+      )
     },
   ] as ColDef<Task, any>[], [debouncedEmailQuery]);
 
