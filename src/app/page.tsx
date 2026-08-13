@@ -181,7 +181,8 @@ export default function DashboardPage() {
                 await fetchTasks();
               } catch (err) {
                 console.error('Failed to update status:', err);
-                alert('Failed to update task status');
+                const msg = err instanceof Error ? err.message : 'Failed to update task status';
+                alert(msg);
               }
             }}
           />
@@ -326,7 +327,8 @@ export default function DashboardPage() {
                       await fetchTasks();
                     } catch (err) {
                       console.error('Delete failed:', err);
-                      alert('Failed to delete task');
+                      const msg = err instanceof Error ? err.message : 'Failed to delete task';
+                      alert(msg);
                     }
                   }}
                   style={{

@@ -60,7 +60,10 @@ export const TaskApiService = {
       method: 'POST',
       body: formData,
     });
-    if (!response.ok) throw new Error('Failed to save task');
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(text || 'Failed to save task');
+    }
     return response.json();
   },
 
@@ -74,7 +77,10 @@ export const TaskApiService = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
-    if (!res.ok) throw new Error('Update task failed');
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(text || 'Update task failed');
+    }
     return res.json();
   },
   async deleteTask(id: string, requesterEmail?: string) {
@@ -82,7 +88,10 @@ export const TaskApiService = {
       ? buildUrl(`/tasks/${encodeURIComponent(id)}?requesterEmail=${encodeURIComponent(requesterEmail)}`)
       : buildUrl(`/tasks/${encodeURIComponent(id)}`);
     const res = await fetch(url, { method: 'DELETE' });
-    if (!res.ok) throw new Error('Delete task failed');
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(text || 'Delete task failed');
+    }
     return res.json();
   },
   // --- Reminders ---
