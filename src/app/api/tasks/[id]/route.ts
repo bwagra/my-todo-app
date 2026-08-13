@@ -1,6 +1,12 @@
 import { NextRequest } from 'next/server';
 import { tasks, normalizeEmail, Task } from '../../mockData';
 
+function normalizeGitHubRepo(repo?: string) {
+  if (!repo) return null;
+  const cleaned = repo.trim().replace(/^https?:\/\/github\.com\//i, '').replace(/\.git$/i, '').replace(/\/+$/, '');
+  return cleaned.includes('/') ? cleaned : null;
+}
+
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const resolvedParams = await params;
@@ -27,7 +33,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     try {
       const didComplete = updates.status === 'Completed' && existing.status !== 'Completed';
       const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
-      const GITHUB_REPO = process.env.GITHUB_REPO; // expected as 'owner/repo'
+      const GITHUB_REPO = normalizeGitHubRepo(process.env.GITHUB_REPO) || 'bwagra/my-to-do';
 
       if (didComplete && GITHUB_TOKEN && GITHUB_REPO) {
         const issueTitle = `Task completed: ${updated.title}`;
@@ -36,7 +42,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
         const res = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/issues`, {
           method: 'POST',
           headers: {
-            Authorization: `token ${GITHUB_TOKEN}`,
+            Authorization: `Bearer ${GITHUB_TOKEN}`,
             'Content-Type': 'application/json',
             Accept: 'application/vnd.github+json',
           },

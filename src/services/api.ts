@@ -20,6 +20,30 @@ function buildUrl(path: string) {
   return BACKEND_URL ? `${BACKEND_URL}${path}` : `/api${path}`;
 }
 
+function getKnownUserEmails(): string[] {
+  try {
+    const raw = typeof window !== 'undefined' ? window.localStorage.getItem('knownUserEmails') : null;
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((value): value is string => typeof value === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+function setKnownUserEmail(email: string) {
+  if (!email) return;
+  try {
+    const existing = getKnownUserEmails();
+    const merged = Array.from(new Set([...existing, email.trim().toLowerCase()]));
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem('knownUserEmails', JSON.stringify(merged));
+    }
+  } catch {
+    // Ignore storage errors in non-browser or private mode.
+  }
+}
+
 export const TaskApiService = {
   // Fetch tasks associated with a user's email
   async getTasks(email: string): Promise<Task[]> {
@@ -44,14 +68,27 @@ export const TaskApiService = {
   ,
   // Search for user emails (used by TaskModal auto-suggest)
   async searchUserEmails(query: string): Promise<string[]> {
-    if (!query) return [];
-    const response = await fetch(buildUrl(`/tasks/users/search?query=${encodeURIComponent(query)}`), {
-      method: 'GET',
-      headers: { 'Content-Type': 'application/json' },
-    });
-    if (!response.ok) return [];
-    const data = await response.json();
-    return Array.isArray(data) ? data : [];
+    const normalizedQuery = query.trim();
+    if (!normalizedQuery) return getKnownUserEmails();
+
+    let backendResults: string[] = [];
+    try {
+      const response = await fetch(buildUrl(`/tasks/users/search?query=${encodeURIComponent(normalizedQuery)}`), {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (response.ok) {
+        const data = await response.json();
+        backendResults = Array.isArray(data) ? data : [];
+      }
+    } catch {
+      backendResults = [];
+    }
+
+    const known = getKnownUserEmails();
+    return Array.from(new Set([...known, ...backendResults]))
+      .filter((email) => email.toLowerCase().includes(normalizedQuery.toLowerCase()))
+      .sort();
   }
   ,
   // Save task with multipart/form-data (file uploads)

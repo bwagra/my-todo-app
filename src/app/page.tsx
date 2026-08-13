@@ -296,24 +296,33 @@ export default function DashboardPage() {
       cellRenderer: (params: any) => (
         <div style={{ display: 'flex', gap: 8 }}>
           <button
+            aria-label="Edit task"
+            title="Edit task"
             onClick={() => {
               setEditingTask(params.data);
               setIsModalOpen(true);
             }}
             style={{
-              padding: '4px 12px',
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: 32,
+              height: 32,
+              padding: 0,
               backgroundColor: '#eab308',
               color: '#ffffff',
               border: 'none',
               borderRadius: '4px',
               cursor: 'pointer',
-              fontWeight: '600',
-              fontSize: '0.85rem'
+              fontSize: '1rem',
+              lineHeight: 1,
             }}
           >
-            Edit
+            ✏️
           </button>
           <button
+            aria-label="Delete task"
+            title="Delete task"
             onClick={async () => {
               const ok = confirm('Delete this task? This cannot be undone.');
               if (!ok) return;
@@ -327,17 +336,22 @@ export default function DashboardPage() {
               }
             }}
             style={{
-              padding: '4px 12px',
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: 32,
+              height: 32,
+              padding: 0,
               backgroundColor: '#ef4444',
               color: '#ffffff',
               border: 'none',
               borderRadius: '4px',
               cursor: 'pointer',
-              fontWeight: '600',
-              fontSize: '0.85rem'
+              fontSize: '1rem',
+              lineHeight: 1,
             }}
           >
-            Delete
+            🗑️
           </button>
         </div>
       )

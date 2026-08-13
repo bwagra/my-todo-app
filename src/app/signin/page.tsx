@@ -23,8 +23,13 @@ export default function SignInPage() {
         data.session.user.user_metadata?.avatar ||
         '';
       try {
-        localStorage.setItem('userEmail', data.session.user.email || '');
+        const signedInEmail = (data.session.user.email || '').trim().toLowerCase();
+        localStorage.setItem('userEmail', signedInEmail);
         if (avatar) localStorage.setItem('userAvatar', avatar);
+
+        const existing = JSON.parse(localStorage.getItem('knownUserEmails') || '[]');
+        const merged = Array.from(new Set([...(Array.isArray(existing) ? existing : []), signedInEmail].filter(Boolean)));
+        localStorage.setItem('knownUserEmails', JSON.stringify(merged));
       } catch (e) {}
       router.push('/');
     }

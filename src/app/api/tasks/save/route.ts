@@ -1,9 +1,15 @@
 import { NextRequest } from 'next/server';
 import { tasks, normalizeEmail, generateId, Task } from '../../mockData';
 
+function normalizeGitHubRepo(repo?: string) {
+  if (!repo) return null;
+  const cleaned = repo.trim().replace(/^https?:\/\/github\.com\//i, '').replace(/\.git$/i, '').replace(/\/+$/, '');
+  return cleaned.includes('/') ? cleaned : null;
+}
+
 async function createGitHubIssue(task: Task) {
   const token = process.env.GITHUB_TOKEN;
-  const repo = process.env.GITHUB_REPO || 'bwagra/my-to-do';
+  const repo = normalizeGitHubRepo(process.env.GITHUB_REPO) || 'bwagra/my-to-do';
 
   if (!token) {
     console.warn('GITHUB_TOKEN is not configured; skipping GitHub issue creation.');

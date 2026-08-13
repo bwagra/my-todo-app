@@ -18,7 +18,11 @@ export default function SignUpPage() {
     }
     if (data?.user) {
       try {
-        localStorage.setItem('userEmail', email);
+        const normalizedEmail = email.trim().toLowerCase();
+        localStorage.setItem('userEmail', normalizedEmail);
+        const existing = JSON.parse(localStorage.getItem('knownUserEmails') || '[]');
+        const merged = Array.from(new Set([...(Array.isArray(existing) ? existing : []), normalizedEmail].filter(Boolean)));
+        localStorage.setItem('knownUserEmails', JSON.stringify(merged));
       } catch (e) {}
       router.push('/');
     }
